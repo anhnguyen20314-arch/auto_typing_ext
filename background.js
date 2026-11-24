@@ -38,32 +38,107 @@ const KEY_MAP = (() => {
   return map;
 })();
 
-function pressKey(tabId, down, up) {
-  const target = { tabId };
-  return chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', down).then(() => {
+const LEFT_HAND = new Set([
+  'KeyQ', 'KeyW', 'KeyE', 'KeyR', 'KeyT', 'KeyA', 'KeyS', 'KeyD', 'KeyF', 'KeyG', 'KeyZ', 'KeyX', 'KeyC', 'KeyV', 'KeyB',
+  'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Backquote'
+]);
+// Keys pressed with the little finger are held a bit longer.
+const PINKY = new Set([
+  'KeyQ', 'KeyA', 'KeyZ', 'KeyP', 'Semicolon', 'Slash', 'Quote', 'Backquote', 'Digit1', 'Digit0', 'Minus', 'Equal',
+  'BracketLeft', 'BracketRight', 'Backslash', 'Backspace', 'Enter'
+]);
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+const keyCmd = (tabId, params) => chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', params);
+
+function gauss() {
+  let u = 0;
+  while (u === 0) u = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
+}
+
+// How long a key stays down: shorter for faster typists, varied per press.
+function holdTime(code, wpm) {
+  const mean = Math.min(110, Math.max(55, 110 - (Number(wpm) || 65) * 0.35));
+  let h = mean * Math.exp(0.25 * gauss() - 0.03125);
+  if (PINKY.has(code)) h *= 1.15;
+  if (code === 'Space') h *= 1.1;
+  return Math.min(220, Math.max(30, h));
+}
+
+function pressKey(tabId, down, up, wpm) {
+  return keyCmd(tabId, down).then(() => {
     // Release a moment later, like a finger leaving the key.
-    setTimeout(() => {
-      chrome.debugger.sendCommand(target, 'Input.dispatchKeyEvent', up).catch(() => {});
-    }, 40 + Math.random() * 70);
+    setTimeout(() => keyCmd(tabId, up).catch(() => {}), holdTime(down.code, wpm));
   });
+}
+
+// ---- Shift key ---------------------------------------------------------------
+// Capitals and symbols get a real Shift press: down before the key, up shortly
+// after, and held across a run of shifted characters.
+
+const shiftState = new Map(); // tabId -> { held, side, timer }
+
+function shiftEvent(type, side) {
+  const left = side === 'L';
+  return {
+    type,
+    key: 'Shift',
+    code: left ? 'ShiftLeft' : 'ShiftRight',
+    windowsVirtualKeyCode: 16,
+    nativeVirtualKeyCode: 16,
+    location: left ? 1 : 2,
+    modifiers: type === 'keyUp' ? 0 : SHIFT
+  };
+}
+
+async function setShift(tabId, want, code) {
+  let st = shiftState.get(tabId);
+  if (!st) {
+    st = { held: false, side: 'L', timer: 0 };
+    shiftState.set(tabId, st);
+  }
+  clearTimeout(st.timer);
+  st.timer = 0;
+  if (want && !st.held) {
+    // Touch typists use the Shift on the opposite hand.
+    st.side = LEFT_HAND.has(code) ? 'R' : 'L';
+    await keyCmd(tabId, shiftEvent('rawKeyDown', st.side));
+    st.held = true;
+    await pause(25 + Math.random() * 55);
+  } else if (!want && st.held) {
+    st.held = false;
+    await keyCmd(tabId, shiftEvent('keyUp', st.side));
+  }
+  if (want) {
+    st.timer = setTimeout(() => {
+      st.held = false;
+      st.timer = 0;
+      keyCmd(tabId, shiftEvent('keyUp', st.side)).catch(() => {});
+    }, 110 + Math.random() * 120);
+  }
 }
 
 async function realKey(tabId, msg) {
   if (msg.op === 'del') {
+    await setShift(tabId, false);
     const k = { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 };
-    return pressKey(tabId, Object.assign({ type: 'rawKeyDown' }, k), Object.assign({ type: 'keyUp' }, k));
+    return pressKey(tabId, Object.assign({ type: 'rawKeyDown' }, k), Object.assign({ type: 'keyUp' }, k), msg.wpm);
   }
   const ch = msg.ch;
   if (ch === '\n') {
     // Shift+Enter: a new line that does not submit a form or send a chat message.
+    await setShift(tabId, true, 'Enter');
     const k = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: SHIFT };
-    return pressKey(tabId, Object.assign({ type: 'keyDown', text: '\r' }, k), Object.assign({ type: 'keyUp' }, k));
+    return pressKey(tabId, Object.assign({ type: 'keyDown', text: '\r' }, k), Object.assign({ type: 'keyUp' }, k), msg.wpm);
   }
   const info = KEY_MAP[ch];
   if (!info) {
     // No single key for this character (accents, emoji, tabs): insert it as text.
+    await setShift(tabId, false);
     return chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text: ch });
   }
+  await setShift(tabId, info.shift, info.code);
   const k = {
     key: ch,
     code: info.code,
@@ -71,7 +146,12 @@ async function realKey(tabId, msg) {
     nativeVirtualKeyCode: info.vk,
     modifiers: info.shift ? SHIFT : 0
   };
-  return pressKey(tabId, Object.assign({ type: 'keyDown', text: ch, unmodifiedText: ch }, k), Object.assign({ type: 'keyUp' }, k));
+  return pressKey(
+    tabId,
+    Object.assign({ type: 'keyDown', text: ch, unmodifiedText: ch }, k),
+    Object.assign({ type: 'keyUp' }, k),
+    msg.wpm
+  );
 }
 
 async function attachDebugger(tabId) {
@@ -86,6 +166,9 @@ async function attachDebugger(tabId) {
 }
 
 function detachDebugger(tabId) {
+  const st = shiftState.get(tabId);
+  if (st) clearTimeout(st.timer);
+  shiftState.delete(tabId);
   chrome.debugger.detach({ tabId }).catch(() => {});
 }
 

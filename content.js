@@ -172,7 +172,9 @@
         if (j.real) {
           // Real key events: the background worker presses the key through Chrome's debugger.
           const res = await chrome.runtime.sendMessage(
-            action.t === 'ins' ? { type: 'BG_KEY', op: 'ins', ch: action.ch } : { type: 'BG_KEY', op: 'del' }
+            action.t === 'ins'
+              ? { type: 'BG_KEY', op: 'ins', ch: action.ch, wpm: j.wpm }
+              : { type: 'BG_KEY', op: 'del', wpm: j.wpm }
           );
           if (!res || !res.ok) throw new Error((res && res.error) || 'the debugger connection was closed');
         } else if (j.kind === 'rich') {
@@ -194,6 +196,7 @@
         for (const a of plan.actions) a.p += j.done;
         j.actions = plan.actions;
         j.typos = j.typosDone + plan.typos;
+        j.wpm = j.pending.wpm;
         j.pending = null;
         k = -1;
       }
@@ -240,6 +243,7 @@
       kind,
       fragile,
       real: !!msg.real,
+      wpm: settings.wpm,
       chars: Array.from(text),
       actions: plan.actions,
       total: plan.total,

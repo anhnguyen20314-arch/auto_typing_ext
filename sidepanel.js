@@ -251,6 +251,20 @@ function systemPrompt() {
     '- Use plain, common words and contractions where they sound natural.',
     '- Mix sentence lengths. Put a short sentence next to a longer one. Do not give every sentence the same shape.',
     '- Say things directly. Starting a sentence with "And" or "But" is fine now and then.',
+    '- Write it the way someone doing this job would note it down for a colleague, not the way a formal report would phrase it.',
+    '- Use verbs instead of abstract nouns. Write "the chart only shows X", not "the weakness is the completeness of X".',
+    '- Drop judging adverbs such as clearly, correctly, effectively, appropriately and successfully. Just say what is there.',
+    '- Do not balance two points in one sentence with while, whereas or although. Make two sentences, or join them with "and" or "but".',
+    '- Do not use a colon or a dash to set up an explanation. Start a new sentence instead.',
+    '- Do not wrap up with an abstract verdict like "these are modest limitations in an otherwise accurate X". ' +
+      'If the original ends on a conclusion or a score, keep it but say it in a few plain words.',
+    '- Leave it a little uneven. Not every sentence needs a smooth link to the one before it, and a short fragment now and then is fine.',
+    '',
+    'Example of the style change (the topic is unrelated):',
+    'Before: "The report clearly outlines the budget, while the appendix effectively illustrates the remaining risk: ' +
+      'the timeline provides only a best-case estimate. These are minor gaps in an otherwise thorough document, supporting a 4."',
+    'After: "The report lays out the budget. The appendix covers the risk that is left, but the timeline only gives a best case. ' +
+      'Small gaps, the rest is thorough, so a 4."',
     '- Do not open sentences with However, Moreover, Furthermore, Additionally, Overall or In conclusion.',
     '- Do not use lists of three for rhythm, "not only ... but also", rhetorical questions, or a closing sentence that restates the point.',
     '- Avoid stock words such as delve, crucial, robust, seamless, leverage, comprehensive, notably, landscape, testament, ' +

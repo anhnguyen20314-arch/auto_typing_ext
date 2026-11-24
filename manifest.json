@@ -33,7 +33,7 @@
     },
     "toggle-pause": {
       "suggested_key": {
-        "default": "Alt+Shift+P"
+        "default": "Alt+P"
       },
       "description": "Pause or resume typing"
     }

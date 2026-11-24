@@ -77,6 +77,8 @@ input[type="number"] { width: 70px; }
 
 .row { display: flex; gap: 8px; align-items: center; }
 .row select { width: auto; flex: 0 0 auto; }
+.row.selects { margin-bottom: 8px; }
+.row.selects select { flex: 1; min-width: 0; }
 
 button {
   flex: 1;

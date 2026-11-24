@@ -17,12 +17,19 @@
   </section>
 
   <section>
-    <div class="row">
+    <div class="row selects">
       <select id="tone" aria-label="Rewrite tone">
         <option value="natural">Natural</option>
         <option value="casual">Casual</option>
         <option value="professional">Professional</option>
       </select>
+      <select id="strength" aria-label="How much to change">
+        <option value="light">Light touch</option>
+        <option value="medium">Medium</option>
+        <option value="strong">Strong rewrite</option>
+      </select>
+    </div>
+    <div class="row">
       <button id="humanize">Humanize with AI</button>
       <button id="undo" class="ghost" hidden>Undo</button>
     </div>

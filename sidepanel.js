@@ -19,8 +19,21 @@ const TONES = {
   professional: 'professional but warm, like a clear email to a colleague'
 };
 
+const STRENGTHS = {
+  light:
+    'Change as little as possible. Keep the sentence order and most of the wording. ' +
+    'Only fix the phrases that sound stiff, formulaic or machine-written.',
+  medium: 'Reword sentences freely, but keep the points in the same order.',
+  strong:
+    'Rewrite thoroughly. You may split, merge and reorder sentences within a paragraph, ' +
+    'as long as nothing is added and nothing is lost.'
+};
+
+// Long texts are rewritten in parts of about this many characters.
+const CHUNK_CHARS = 1500;
+
 let settings = Object.assign({}, DEFAULT_SETTINGS);
-let ai = { provider: 'gemini', tone: 'natural', cfg: {} };
+let ai = { provider: 'gemini', tone: 'natural', strength: 'medium', cfg: {} };
 let beforeHumanize = null;
 let state = 'idle'; // idle | countdown | typing | paused
 let countdownCancelled = false;
@@ -59,6 +72,7 @@ function renderAi() {
   const cfg = providerCfg();
   $('provider').value = ai.provider;
   $('tone').value = ai.tone;
+  $('strength').value = ai.strength;
   $('key').value = cfg.key;
   $('model').value = cfg.model;
   $('base').value = cfg.base;
@@ -241,6 +255,7 @@ function systemPrompt() {
     'You are an experienced human editor. Rewrite the text inside the <text> tags so it reads like something a person wrote ' +
       'and then tidied up once: clear and natural, not polished marketing copy.',
     'Tone: ' + TONES[ai.tone] + '.',
+    'How much to change: ' + STRENGTHS[ai.strength],
     '',
     'Keep the content exactly:',
     '- Keep every fact, number, unit, name, technical term and quoted passage as it is. Quoted text stays word for word.',
@@ -312,6 +327,57 @@ async function readError(resp) {
   return `The provider returned ${resp.status}${detail ? ': ' + detail.slice(0, 300) : ''}`;
 }
 
+async function httpError(resp) {
+  const err = new Error(await readError(resp));
+  err.status = resp.status;
+  return err;
+}
+
+// Split at line breaks into parts of roughly CHUNK_CHARS, never inside a paragraph.
+// Each part remembers the whitespace that followed it so the layout is preserved.
+function splitIntoChunks(text) {
+  const pieces = text.trim().split(/(\s*\n\s*)/); // even = paragraph, odd = separator
+  const chunks = [];
+  let cur = null;
+  for (let i = 0; i < pieces.length; i += 2) {
+    const para = pieces[i];
+    const sep = pieces[i + 1] || '';
+    if (cur && cur.body.length + cur.sep.length + para.length > CHUNK_CHARS) {
+      chunks.push(cur);
+      cur = null;
+    }
+    if (cur) cur.body += cur.sep + para;
+    else cur = { body: para, sep: '' };
+    cur.sep = sep;
+  }
+  if (cur) chunks.push(cur);
+  return chunks;
+}
+
+// Free tiers rate-limit often: wait and retry a couple of times on HTTP 429.
+async function callAiWithRetry(text) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await callAi(text);
+    } catch (err) {
+      if (err.status !== 429 || attempt >= 2) throw err;
+      await sleep(6000 * (attempt + 1));
+    }
+  }
+}
+
+async function rewriteInParts(text, status) {
+  const chunks = splitIntoChunks(text);
+  let out = '';
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks.length > 1) status.textContent = `Rewriting part ${i + 1} of ${chunks.length}…`;
+    const part = cleanOutput(await callAiWithRetry(chunks[i].body));
+    if (!part) throw new Error('The provider returned an empty reply.');
+    out += part + chunks[i].sep;
+  }
+  return out.trim();
+}
+
 async function callAi(text) {
   const cfg = providerCfg();
   if (!cfg.model) throw new Error('Set a model name in AI settings.');
@@ -328,7 +394,7 @@ async function callAi(text) {
         generationConfig: { temperature: 0.9 }
       })
     });
-    if (!resp.ok) throw new Error(await readError(resp));
+    if (!resp.ok) throw await httpError(resp);
     const data = await resp.json();
     const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
     return (parts || []).map((p) => p.text || '').join('');
@@ -350,7 +416,7 @@ async function callAi(text) {
       ]
     })
   });
-  if (!resp.ok) throw new Error(await readError(resp));
+  if (!resp.ok) throw await httpError(resp);
   const data = await resp.json();
   const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
   return typeof content === 'string' ? content : '';
@@ -367,7 +433,7 @@ async function humanize() {
   $('humanize').disabled = true;
   status.textContent = 'Rewriting…';
   try {
-    const out = cleanOutput(await callAi(text));
+    const out = await rewriteInParts(text, status);
     if (!out) throw new Error('The provider returned an empty reply.');
     beforeHumanize = text;
     $('text').value = out;
@@ -418,6 +484,10 @@ $('tone').addEventListener('change', () => {
   ai.tone = $('tone').value;
   saveSoon();
 });
+$('strength').addEventListener('change', () => {
+  ai.strength = $('strength').value;
+  saveSoon();
+});
 for (const id of ['key', 'model', 'base']) {
   $(id).addEventListener('input', () => {
     providerCfg()[id] = $(id).value.trim();
@@ -447,6 +517,7 @@ $('pause').addEventListener('click', togglePause);
   if (stored.ai) ai = Object.assign(ai, stored.ai);
   if (!PROVIDERS[ai.provider]) ai.provider = 'gemini';
   if (!TONES[ai.tone]) ai.tone = 'natural';
+  if (!STRENGTHS[ai.strength]) ai.strength = 'medium';
   if (!ai.cfg) ai.cfg = {};
   renderSettings();
   renderAi();

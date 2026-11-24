@@ -29,7 +29,7 @@
     if (!job) return;
     try {
       chrome.runtime
-        .sendMessage({ type: 'AT_PROGRESS', state, done: job.done, total: job.total, typos: job.typos, note: note || '' })
+        .sendMessage({ type: 'AT_PROGRESS', state, done: job.done, total: job.total, typos: job.typos, mistake: !!job.mistake, note: note || '' })
         .catch(() => {});
     } catch (_) {
       /* extension was reloaded */
@@ -151,7 +151,6 @@
   }
 
   async function run(j) {
-    let lastReport = 0;
     report('typing');
     for (let k = 0; k < j.actions.length; k++) {
       const action = j.actions[k];
@@ -181,6 +180,7 @@
         break;
       }
       j.done = action.p;
+      j.mistake = !action.c; // a typo is on screen and not yet corrected
       if (action.m) j.typosDone++;
       // Settings changed mid-run: re-plan the rest once no typo is half-corrected.
       if (j.pending && action.c) {
@@ -191,11 +191,7 @@
         j.pending = null;
         k = -1;
       }
-      const now = performance.now();
-      if (now - lastReport > 200) {
-        lastReport = now;
-        report('typing');
-      }
+      report('typing');
     }
     if (j.kind !== 'rich' && j.target.isConnected) {
       j.target.dispatchEvent(new Event('change', { bubbles: true }));
@@ -249,6 +245,12 @@
       stopped: false,
       note: ''
     };
+    // Tell the side panel exactly what is being typed so it can highlight progress.
+    try {
+      chrome.runtime.sendMessage({ type: 'AT_STARTED', text }).catch(() => {});
+    } catch (_) {
+      /* extension was reloaded */
+    }
     run(job);
     return { ok: true, total: plan.total };
   }

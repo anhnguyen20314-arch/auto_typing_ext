@@ -8,6 +8,7 @@
   --accent: #2459d6;
   --accent-fg: #ffffff;
   --error: #b3261e;
+  --typed: #1a7f37;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -20,6 +21,7 @@
     --accent: #7ea2ff;
     --accent-fg: #10131c;
     --error: #ff8a80;
+    --typed: #56d364;
   }
 }
 
@@ -53,6 +55,23 @@ textarea, input[type="text"], input[type="url"], input[type="password"], input[t
 
 textarea { resize: vertical; min-height: 120px; }
 input[type="number"] { width: 70px; }
+
+/* Read-only view of the text shown while typing. */
+.live {
+  position: relative;
+  width: 100%;
+  min-height: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--field);
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.live .done { color: var(--typed); }
+.live .cur { background: var(--accent); color: var(--accent-fg); border-radius: 2px; }
+.live .cur.typo { background: var(--error); color: var(--bg); }
 
 .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 4px; }
 

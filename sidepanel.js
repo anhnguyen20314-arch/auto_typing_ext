@@ -100,9 +100,36 @@ function setStatus(text, isError) {
   $('status').classList.toggle('error', !!isError);
 }
 
+// ---- live progress view ------------------------------------------------------
+
+let liveChars = null; // the text being typed, as an array of characters
+
+function renderLive(done, mistake) {
+  if (!liveChars) return;
+  const live = $('live');
+  const cur = $('liveCur');
+  const ch = liveChars[done];
+  $('liveDone').textContent = liveChars.slice(0, done).join('');
+  // A line break has no width, so show a return sign for it.
+  cur.textContent = ch === undefined ? '' : ch === '\n' ? '↵\n' : ch;
+  cur.classList.toggle('typo', !!mistake);
+  $('liveRest').textContent = liveChars.slice(done + 1).join('');
+  // Keep the current letter in view.
+  const top = cur.offsetTop;
+  if (top < live.scrollTop || top + cur.offsetHeight > live.scrollTop + live.clientHeight) {
+    live.scrollTop = Math.max(0, top - live.clientHeight / 2);
+  }
+}
+
 function setState(next) {
   state = next;
   const busy = state !== 'idle';
+  const showLive = (state === 'typing' || state === 'paused') && !!liveChars;
+  if (showLive && $('live').hidden) $('live').style.height = $('text').offsetHeight + 'px';
+  $('live').hidden = !showLive;
+  $('text').hidden = showLive;
+  $('text').readOnly = busy;
+  if (!busy) liveChars = null;
   $('start').disabled = busy;
   $('stop').disabled = !busy;
   $('pause').disabled = state !== 'typing' && state !== 'paused';
@@ -168,17 +195,28 @@ async function togglePause() {
 }
 
 chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === 'AT_STARTED') {
+    liveChars = Array.from(String(msg.text || ''));
+    return;
+  }
   if (!msg || msg.type !== 'AT_PROGRESS') return;
+  if ((msg.state === 'typing' || msg.state === 'paused') && !liveChars) {
+    // The panel was opened mid-run: use the box's text if it is the same length.
+    const chars = Array.from($('text').value.replace(/\r\n?/g, '\n'));
+    if (chars.length === msg.total) liveChars = chars;
+  }
   if (msg.total) $('progress').value = msg.done / msg.total;
   let counts = msg.total ? ` ${msg.done} / ${msg.total}` : '';
   if (msg.total) counts += msg.typos ? ` · ${msg.typos} typos planned` : ' · no typos planned';
   switch (msg.state) {
     case 'typing':
       setState('typing');
+      renderLive(msg.done, msg.mistake);
       setStatus('Typing…' + counts);
       break;
     case 'paused':
       setState('paused');
+      renderLive(msg.done, msg.mistake);
       setStatus(msg.note || 'Paused.' + counts);
       break;
     case 'done':

@@ -369,12 +369,20 @@ async function callAiWithRetry(text) {
 async function rewriteInParts(text, status) {
   const chunks = splitIntoChunks(text);
   let out = '';
+  const bar = $('aiProgress');
   for (let i = 0; i < chunks.length; i++) {
-    if (chunks.length > 1) status.textContent = `Rewriting part ${i + 1} of ${chunks.length}…`;
+    if (chunks.length > 1) {
+      status.textContent = `Rewriting part ${i + 1} of ${chunks.length}…`;
+      bar.value = i / chunks.length;
+    } else {
+      // One request gives no partial progress, so show the moving "busy" bar.
+      bar.removeAttribute('value');
+    }
     const part = cleanOutput(await callAiWithRetry(chunks[i].body));
     if (!part) throw new Error('The provider returned an empty reply.');
     out += part + chunks[i].sep;
   }
+  bar.value = 1;
   return out.trim();
 }
 
@@ -431,6 +439,8 @@ async function humanize() {
     return;
   }
   $('humanize').disabled = true;
+  $('aiProgress').removeAttribute('value');
+  $('aiProgress').hidden = false;
   status.textContent = 'Rewriting…';
   try {
     const out = await rewriteInParts(text, status);
@@ -452,6 +462,7 @@ async function humanize() {
     status.classList.add('error');
     if (/key|model|base URL/i.test(status.textContent)) $('aiDetails').open = true;
   } finally {
+    $('aiProgress').hidden = true;
     $('humanize').disabled = false;
   }
 }

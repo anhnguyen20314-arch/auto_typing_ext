@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Auto Typer</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <h1>Auto Typer</h1>
+
+  <section>
+    <label for="text">Text to type</label>
+    <textarea id="text" rows="10" placeholder="Paste or write your text here"></textarea>
+    <div class="meta"><span id="count">0 characters</span><span id="estimate"></span></div>
+  </section>
+
+  <section>
+    <div class="row">
+      <select id="tone" aria-label="Rewrite tone">
+        <option value="natural">Natural</option>
+        <option value="casual">Casual</option>
+        <option value="professional">Professional</option>
+      </select>
+      <button id="humanize">Humanize with AI</button>
+      <button id="undo" class="ghost" hidden>Undo</button>
+    </div>
+    <p id="aiStatus" class="status"></p>
+
+    <details id="aiDetails">
+      <summary>AI settings</summary>
+      <label for="provider">Provider</label>
+      <select id="provider">
+        <option value="gemini">Google Gemini</option>
+        <option value="groq">Groq</option>
+        <option value="openrouter">OpenRouter</option>
+        <option value="custom">Custom (OpenAI-compatible)</option>
+      </select>
+      <div id="baseRow" hidden>
+        <label for="base">Base URL</label>
+        <input id="base" type="url" placeholder="https://example.com/v1" spellcheck="false">
+      </div>
+      <label for="key">API key <a id="keyLink" target="_blank" rel="noreferrer">get a key</a></label>
+      <input id="key" type="password" autocomplete="off" spellcheck="false">
+      <label for="model">Model</label>
+      <input id="model" type="text" spellcheck="false">
+      <p class="hint">The key is stored only in this browser. Your text is sent to the provider you choose.</p>
+    </details>
+  </section>
+
+  <section>
+    <div class="slider">
+      <label for="wpm">Speed</label><output id="wpmOut"></output>
+      <input id="wpm" type="range" min="20" max="160" step="5">
+    </div>
+    <div class="slider">
+      <label for="typoRate">Typos</label><output id="typoOut"></output>
+      <input id="typoRate" type="range" min="0" max="10" step="0.5">
+    </div>
+    <div class="slider">
+      <label for="pauseScale">Pauses</label><output id="pauseOut"></output>
+      <input id="pauseScale" type="range" min="0" max="2" step="0.1">
+    </div>
+    <div class="row">
+      <label for="countdown" class="inline">Start delay (seconds)</label>
+      <input id="countdown" type="number" min="0" max="30" step="1">
+    </div>
+  </section>
+
+  <section>
+    <div class="row">
+      <button id="start" class="primary">Start typing</button>
+      <button id="pause" disabled>Pause</button>
+      <button id="stop" disabled>Stop</button>
+    </div>
+    <progress id="progress" value="0" max="1"></progress>
+    <p id="status" class="status">Press Start, then click into the field you want to type in.</p>
+    <p class="hint">Hotkey: Alt+Shift+T starts or stops typing in the focused field. Esc stops too.</p>
+  </section>
+
+  <script src="engine.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

@@ -68,6 +68,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Hotkey: stop if something is typing, otherwise start.
 chrome.commands.onCommand.addListener(async (name) => {
+  if (name === 'toggle-pause') {
+    // Only a running job answers AT_PAUSE; only a paused one answers AT_RESUME.
+    const paused = await command('AT_PAUSE');
+    if (!paused.ok) await command('AT_RESUME');
+    return;
+  }
   if (name !== 'toggle-typing') return;
   const stopped = await command('AT_STOP');
   if (stopped.ok) return;

@@ -40,6 +40,8 @@ h1 { font-size: 16px; margin: 0 0 10px; }
 section { margin-bottom: 16px; }
 
 label { display: block; margin: 8px 0 4px; font-weight: 600; }
+label.check { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+label.check input { accent-color: var(--accent); }
 label.inline { margin: 0; flex: 1; font-weight: 400; }
 label a { font-weight: 400; margin-left: 6px; color: var(--accent); }
 

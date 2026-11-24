@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3 };
+const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3, realKeys: false };
 
 // Default model names change over time; the Model field is editable.
 const PROVIDERS = {
@@ -63,6 +63,7 @@ function renderSettings() {
   $('typoRate').value = settings.typoRate;
   $('pauseScale').value = settings.pauseScale;
   $('countdown').value = settings.countdown;
+  $('realKeys').checked = !!settings.realKeys;
   $('wpmOut').textContent = settings.wpm + ' wpm';
   $('typoOut').textContent = Number(settings.typoRate) === 0 ? 'off' : settings.typoRate + '% of letters';
   $('pauseOut').textContent = Number(settings.pauseScale) === 0 ? 'off' : '×' + Number(settings.pauseScale).toFixed(1);
@@ -485,6 +486,12 @@ for (const id of ['wpm', 'typoRate', 'pauseScale', 'countdown']) {
     pushLiveSettings();
   });
 }
+
+// Takes effect on the next run, not one already in progress.
+$('realKeys').addEventListener('change', () => {
+  settings.realKeys = $('realKeys').checked;
+  saveSoon();
+});
 
 $('provider').addEventListener('change', () => {
   ai.provider = $('provider').value;

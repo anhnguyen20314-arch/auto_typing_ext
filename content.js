@@ -29,7 +29,7 @@
     if (!job) return;
     try {
       chrome.runtime
-        .sendMessage({ type: 'AT_PROGRESS', state, done: job.done, total: job.total, typos: job.typos, mistake: !!job.mistake, note: note || '' })
+        .sendMessage({ type: 'AT_PROGRESS', state, done: job.done, total: job.total, typos: job.typos, mistake: !!job.mistake, real: !!job.real, note: note || '' })
         .catch(() => {});
     } catch (_) {
       /* extension was reloaded */
@@ -169,7 +169,13 @@
         if (j.stopped) break;
       }
       try {
-        if (j.kind === 'rich') {
+        if (j.real) {
+          // Real key events: the background worker presses the key through Chrome's debugger.
+          const res = await chrome.runtime.sendMessage(
+            action.t === 'ins' ? { type: 'BG_KEY', op: 'ins', ch: action.ch } : { type: 'BG_KEY', op: 'del' }
+          );
+          if (!res || !res.ok) throw new Error((res && res.error) || 'the debugger connection was closed');
+        } else if (j.kind === 'rich') {
           if (action.t === 'ins') richInsert(action.ch);
           else richDelete();
         } else if (action.t === 'ins') fieldInsert(j.target, action.ch);
@@ -193,7 +199,7 @@
       }
       report('typing');
     }
-    if (j.kind !== 'rich' && j.target.isConnected) {
+    if (!j.real && j.kind !== 'rich' && j.target.isConnected) {
       j.target.dispatchEvent(new Event('change', { bubbles: true }));
     }
     if (j.stopped) report(j.note ? 'error' : 'stopped', j.note);
@@ -233,6 +239,7 @@
       target,
       kind,
       fragile,
+      real: !!msg.real,
       chars: Array.from(text),
       actions: plan.actions,
       total: plan.total,

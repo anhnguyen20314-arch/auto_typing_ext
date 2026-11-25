@@ -183,8 +183,8 @@
           // Real key events: the background worker presses the key through Chrome's debugger.
           const res = await chrome.runtime.sendMessage(
             action.t === 'ins'
-              ? { type: 'BG_KEY', op: 'ins', ch: action.ch, wpm: j.wpm, h: action.h }
-              : { type: 'BG_KEY', op: 'del', wpm: j.wpm, h: action.h }
+              ? { type: 'BG_KEY', op: 'ins', ch: action.ch, wpm: j.wpm, h: action.h, s: j.shift }
+              : { type: 'BG_KEY', op: 'del', wpm: j.wpm, h: action.h, s: j.shift }
           );
           if (res && res.retry) {
             // The key helper refused: another program is in front. Wait, then press this key again.
@@ -211,7 +211,7 @@
       if (action.m) j.typosDone++;
       // Settings changed mid-run: re-plan the rest once no typo is half-corrected.
       if (j.pending && action.c) {
-        const plan = buildPlan(j.chars.slice(j.done).join(''), j.pending, j.fragile);
+        const plan = buildPlan(j.chars.slice(j.done).join(''), j.pending, j.fragile, j.who, true);
         for (const a of plan.actions) a.p += j.done;
         j.actions = plan.actions;
         j.typos = j.typosDone + plan.typos;
@@ -232,12 +232,16 @@
     if (job === j) job = null;
   }
 
-  function buildPlan(text, settings, fragile) {
+  // who: the typist (profile) and how they are doing in this run (session).
+  function buildPlan(text, settings, fragile, who, resumed) {
     return Engine.buildPlan(text, {
       wpm: settings.wpm,
       typoRate: (Number(settings.typoRate) || 0) / 100,
       pauseScale: settings.pauseScale,
-      allowTypos: !fragile
+      allowTypos: !fragile,
+      profile: who.profile,
+      session: who.session,
+      warmup: !resumed
     });
   }
 
@@ -255,12 +259,18 @@
     // No typos in password fields: nobody can see them and a slip would be costly.
     const fragile = kind === 'input' && (target.getAttribute('type') || '').toLowerCase() === 'password';
 
-    const plan = buildPlan(text, settings, fragile);
+    const who = {
+      profile: Number.isInteger(msg.profile) ? msg.profile : undefined,
+      session: Math.floor(Math.random() * 4294967296)
+    };
+    const plan = buildPlan(text, settings, fragile, who);
 
     job = {
       target,
       kind,
       fragile,
+      who,
+      shift: plan.shift,
       real: !!msg.real,
       system: !!msg.system,
       wpm: settings.wpm,

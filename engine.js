@@ -72,7 +72,58 @@
     };
   }
 
+  // A typist: the personal habits that stay the same from one text to the next.
+  // The same seed always gives the same typist; no seed gives an average one.
+  function makeProfile(seed) {
+    const neutral = seed === undefined || seed === null;
+    const rng = mulberry32(neutral ? 1 : seed);
+    const g = () => {
+      if (neutral) return 0;
+      let u = 0;
+      while (u === 0) u = rng();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng());
+    };
+    const u = (lo, hi) => (neutral ? (lo + hi) / 2 : lo + rng() * (hi - lo));
+    const p = { seed: neutral ? 0 : seed >>> 0, neutral };
+    p.fingerSpeed = Array.from({ length: 8 }, () => Math.exp(0.07 * g())); // some fingers are slower
+    p.fingerHold = Array.from({ length: 8 }, () => Math.exp(0.09 * g()));
+    p.keyHold = {};
+    Object.keys(FINGER).forEach((k) => (p.keyHold[k] = Math.exp(0.08 * g())));
+    p.spaceHold = Math.exp(0.1 * g());
+    p.holdScale = Math.exp(0.14 * g()); // heavy or light touch
+    p.holdSigma = u(0.16, 0.28);
+    p.gapSigma = u(0.26, 0.38); // how even the rhythm is
+    p.sameKey = u(0.78, 0.92);
+    p.sameFinger = u(1.12, 1.34);
+    p.altHand = u(0.87, 0.99);
+    p.wordRamp = u(0.1, 0.4); // how much a word speeds up after its first letters
+    p.pause = Math.exp(0.22 * g());
+    p.think = u(0.02, 0.045);
+    p.notice = u(480, 740); // ms to notice a slip
+    p.backspace = u(100, 150); // ms between Backspace taps
+    // Many people only ever use the left Shift; touch typists use the opposite hand.
+    p.shift = { side: neutral || rng() >= 0.4 ? 'opp' : 'L', lead: Math.round(u(35, 75)), lag: Math.round(u(120, 200)) };
+    return p;
+  }
+
+  // This typist's habit for one pair of letters: its speed and how steady it is.
+  function pairHabit(profile, cache, a, b) {
+    if (profile.neutral || !/^[a-z]$/.test(a) || !/^[a-z]$/.test(b)) return NO_HABIT;
+    const id = a + b;
+    let h = cache[id];
+    if (!h) {
+      const r = mulberry32((profile.seed ^ Math.imul(a.charCodeAt(0) * 131 + b.charCodeAt(0), 0x9e3779b1)) >>> 0);
+      r();
+      const n = Math.sqrt(-2 * Math.log(r() || 0.5)) * Math.cos(2 * Math.PI * r());
+      h = cache[id] = { speed: Math.exp(0.12 * n), spread: 0.7 + r() * 0.6 };
+    }
+    return h;
+  }
+  const NO_HABIT = { speed: 1, spread: 1 };
+
   /**
+   * opts.profile: seed of the typist (see makeProfile). opts.session: seed for
+   * how this typist is doing today. opts.warmup=false skips the slow start.
    * @param {string} text
    * @param {{wpm?:number, typoRate?:number, pauseScale?:number, allowTypos?:boolean, rng?:()=>number}} opts
    *   typoRate is a probability per letter (0..1).
@@ -91,7 +142,23 @@
     const n = chars.length;
     const base = 60000 / (wpm * 5);
     const actions = [];
+    const P = makeProfile(opts.profile);
+    const habits = {};
+    // The same person is a little quicker or slower, steadier or shakier, from day to day.
+    let daySpeed = 1, dayHold = 1, daySigma = 1;
+    if (opts.session !== undefined && opts.session !== null) {
+      const sr = mulberry32(opts.session);
+      const sg = () => Math.sqrt(-2 * Math.log(sr() || 0.5)) * Math.cos(2 * Math.PI * sr());
+      daySpeed = Math.exp(0.05 * sg());
+      dayHold = Math.exp(0.04 * sg());
+      daySigma = Math.exp(0.08 * sg());
+    }
+    // Faster typists are more regular.
+    const gapSigma = P.gapSigma * daySigma * clamp(1.2 - wpm * 0.003, 0.75, 1.1);
     let drift = 1; // slow wander of overall speed
+    let tide = 1; // much slower wander, over hundreds of keys
+    let warm = opts.warmup === false || P.neutral ? 0 : 0.08; // the first keys of a run are slower
+    let pos = 0; // letters already typed in the current word
     let wordMult = 1; // speed of the word being typed
     let typoCtx = 1; // slips are likelier in long, unfamiliar words
     let typos = 0;
@@ -109,14 +176,21 @@
 
     function keyDelay(ch, prev, scale) {
       drift = clamp(drift + (1 - drift) * 0.05 + gauss() * 0.03, 0.75, 1.3);
-      let m = lognormal(0.32);
+      tide = clamp(tide + (1 - tide) * 0.004 + gauss() * 0.008, 0.85, 1.2);
+      warm *= 0.97;
       const lc = ch.toLowerCase();
       const lp = prev === undefined ? '' : prev.toLowerCase();
+      const habit = pairHabit(P, habits, lp, lc);
+      let m = lognormal(gapSigma * habit.spread) * habit.speed * daySpeed * tide * (1 + warm);
+      const finger = FINGER[keyOf(ch)];
+      if (finger !== undefined) m *= P.fingerSpeed[finger];
+      // Words start carefully and speed up.
+      if (pos > 0 && isLetter(ch)) m *= 1 + P.wordRamp * (Math.exp(-pos / 1.5) - 0.35);
       // The other hand can already be on its way; the same finger has to travel.
       const rel = prev === undefined ? 'free' : relation(keyOf(prev), keyOf(ch));
-      if (rel === 'same') m *= 0.85;
-      else if (rel === 'finger') m *= 1.22;
-      else if (rel === 'alt') m *= 0.93;
+      if (rel === 'same') m *= P.sameKey;
+      else if (rel === 'finger') m *= P.sameFinger;
+      else if (rel === 'alt') m *= P.altHand;
       if (FAST_BIGRAMS.has(lp + lc)) m *= 0.82;
       if (isUpper(ch) || SHIFTED.has(ch)) m *= 1.35;
       else if (/^[0-9]$/.test(ch)) m *= 1.2;
@@ -164,8 +238,8 @@
       if (prev === ',' || prev === ';' || prev === ':') p = skewed(210, 0.45, 80, 1500);
       else if (prev === '.' || prev === '!' || prev === '?') p = skewed(600, 0.6, 180, 6000);
       else if (prev === '\n') p = skewed(1300, 0.7, 350, 12000);
-      else if (afterSpace && rng() < 0.03) p = skewed(1300, 0.75, 500, 10000); // thinking
-      return p * pauseScale;
+      else if (afterSpace && rng() < P.think) p = skewed(1300, 0.75, 500, 10000); // thinking
+      return p * pauseScale * P.pause;
     }
 
     function lookahead(from, max) {
@@ -199,7 +273,12 @@
       if (dels > 0) typos++;
       for (let j = 0; j < dels; j++) {
         // Noticing takes a moment; after that Backspace is tapped in a quick, even run.
-        const d = j === 0 ? skewed(600, 0.38, 280, 2500) : wholeWord ? skewed(80, 0.2, 45, 160) : skewed(125, 0.22, 70, 260);
+        const d =
+          j === 0
+            ? skewed(P.notice, 0.38, 280, 2500)
+            : wholeWord
+              ? skewed(P.backspace * 0.64, 0.2, 45, 160)
+              : skewed(P.backspace, 0.22, 70, 260);
         actions.push({ t: 'del', d, p: i + cp });
       }
       prev = cp > 0 ? correct[cp - 1] : chars[i - 1];
@@ -220,6 +299,7 @@
       const ch = chars[i];
       const prev = chars[i - 1];
       let word = null;
+      pos = isLetter(ch) && isLetter(prev) ? pos + 1 : 0;
       if (!isLetter(ch)) wordMult = typoCtx = 1;
       else if (!isLetter(prev)) {
         word = wordAt(i);
@@ -287,13 +367,14 @@
     // How long each key stays down. Fingers do not wait for the previous key to
     // come up: with the other hand the next key often lands first (rollover),
     // while the same finger has to leave its key before it can press another.
-    const holdMean = clamp(HOLD_BASE - wpm * 0.25, 80, 125);
+    const holdMean = clamp(HOLD_BASE - wpm * 0.25, 80, 125) * P.holdScale * dayHold;
     const actionKey = (a) => (a.t === 'del' ? 'bs' : keyOf(a.ch));
     actions.forEach((a, k) => {
       const key = actionKey(a);
-      let h = holdMean * lognormal(0.22);
+      let h = holdMean * lognormal(P.holdSigma);
+      if (FINGER[key] !== undefined) h *= P.keyHold[key] * P.fingerHold[FINGER[key]];
       if (FINGER[key] === 0 || FINGER[key] === 7) h *= 1.1;
-      else if (key === ' ') h *= 1.05;
+      else if (key === ' ') h *= 1.05 * P.spaceHold;
       const next = actions[k + 1];
       if (next) {
         const rel = relation(key, actionKey(next));
@@ -306,7 +387,7 @@
 
     let durationMs = 0;
     for (const a of actions) durationMs += a.d;
-    return { actions, total: n, durationMs, typos };
+    return { actions, total: n, durationMs, typos, shift: P.shift };
   }
 
   function simulate(actions) {
@@ -318,7 +399,7 @@
     return buf.join('');
   }
 
-  const api = { buildPlan, simulate, mulberry32 };
+  const api = { buildPlan, simulate, mulberry32, makeProfile };
   root.AutoTyperEngine = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

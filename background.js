@@ -183,7 +183,10 @@ function shiftEvent(type, side) {
   };
 }
 
-async function setShift(tabId, want, code) {
+// habit: this typist's way with Shift (which side, how early down, how late up).
+async function setShift(tabId, want, code, habit) {
+  const h = habit || {};
+  const spread = (ms) => Math.min(ms * 2.5, Math.max(ms * 0.45, ms * Math.exp(0.3 * gauss())));
   let st = shiftState.get(tabId);
   if (!st) {
     st = { held: false, side: 'L', timer: 0 };
@@ -193,10 +196,10 @@ async function setShift(tabId, want, code) {
   st.timer = 0;
   if (want && !st.held) {
     // Touch typists use the Shift on the opposite hand.
-    st.side = LEFT_HAND.has(code) ? 'R' : 'L';
+    st.side = h.side === 'L' ? 'L' : LEFT_HAND.has(code) ? 'R' : 'L';
     await keyCmd(tabId, shiftEvent('rawKeyDown', st.side));
     st.held = true;
-    await pause(25 + Math.random() * 55);
+    await pause(spread(Number(h.lead) || 52));
   } else if (!want && st.held) {
     st.held = false;
     await keyCmd(tabId, shiftEvent('keyUp', st.side));
@@ -206,7 +209,7 @@ async function setShift(tabId, want, code) {
       st.held = false;
       st.timer = 0;
       keyCmd(tabId, shiftEvent('keyUp', st.side)).catch(() => {});
-    }, 110 + Math.random() * 120);
+    }, spread(Number(h.lag) || 165));
   }
 }
 
@@ -220,7 +223,7 @@ async function realKey(tabId, msg) {
   const ch = msg.ch;
   if (ch === '\n') {
     // Shift+Enter: a new line that does not submit a form or send a chat message.
-    await setShift(tabId, true, 'Enter');
+    await setShift(tabId, true, 'Enter', msg.s);
     const k = { key: 'Enter', code: 'Enter', scan: SCAN.Enter, windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: SHIFT };
     return pressKey(tabId, Object.assign({ type: 'keyDown', text: '\r' }, k), Object.assign({ type: 'keyUp' }, k), msg);
   }
@@ -236,7 +239,7 @@ async function realKey(tabId, msg) {
     if (system) return sysSend({ op: 'text', text: ch });
     return chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text: ch });
   }
-  await setShift(tabId, info.shift, info.code);
+  await setShift(tabId, info.shift, info.code, msg.s);
   const k = {
     key: ch,
     code: info.code,
@@ -296,12 +299,18 @@ async function startTyping() {
   const tab = await activeTab();
   if (!tab || tab.id === undefined) return { ok: false, error: 'No active tab found.' };
 
-  const stored = await chrome.storage.local.get(['text', 'settings']);
+  const stored = await chrome.storage.local.get(['text', 'settings', 'profileSeed']);
+  // Each install is its own typist: the same personal habits in every run.
+  let profile = stored.profileSeed;
+  if (!Number.isInteger(profile)) {
+    profile = crypto.getRandomValues(new Uint32Array(1))[0];
+    await chrome.storage.local.set({ profileSeed: profile });
+  }
   const text = stored.text || '';
   if (!text.trim()) return { ok: false, error: 'There is no text to type. Enter some in the Auto Typer panel.' };
   const settings = Object.assign({}, DEFAULT_SETTINGS, stored.settings);
   const mode = keyModeOf(settings);
-  const msg = { type: 'AT_START', text, settings, real: mode !== 'script', system: mode === 'system' };
+  const msg = { type: 'AT_START', text, settings, profile, real: mode !== 'script', system: mode === 'system' };
 
   if (mode === 'debugger') {
     try {

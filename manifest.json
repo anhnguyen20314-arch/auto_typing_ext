@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Types your text into the focused field with human-like speed, pauses and self-corrected typos. Optional AI rewrite.",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "sidePanel", "scripting", "debugger"],
+  "permissions": ["storage", "sidePanel", "scripting", "debugger", "nativeMessaging"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"

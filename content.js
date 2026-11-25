@@ -25,6 +25,9 @@
     return null;
   }
 
+  // System keys go to whatever has keyboard focus, so the page itself must have it.
+  const hasFocus = (j) => deepActive() === j.target && (!j.system || document.hasFocus());
+
   function report(state, note) {
     if (!job) return;
     try {
@@ -134,7 +137,7 @@
         while (j.paused && !j.stopped) {
           await sleep(120);
           // Focus-loss pauses resume by themselves when focus comes back.
-          if (j.autoPaused && deepActive() === j.target) {
+          if (j.autoPaused && hasFocus(j)) {
             j.paused = false;
             j.autoPaused = false;
             report('typing');
@@ -161,7 +164,7 @@
         j.note = 'The text field disappeared from the page.';
         break;
       }
-      if (deepActive() !== j.target) {
+      if (!hasFocus(j)) {
         j.paused = true;
         j.autoPaused = true;
         report('paused', 'Focus left the field. Click back into it to continue.');
@@ -176,7 +179,16 @@
               ? { type: 'BG_KEY', op: 'ins', ch: action.ch, wpm: j.wpm }
               : { type: 'BG_KEY', op: 'del', wpm: j.wpm }
           );
-          if (!res || !res.ok) throw new Error((res && res.error) || 'the debugger connection was closed');
+          if (res && res.retry) {
+            // The key helper refused: another program is in front. Wait, then press this key again.
+            j.paused = true;
+            j.autoPaused = true;
+            report('paused', 'Waiting: ' + (res.error || 'the page is not in front') + '. Click back into the field to continue.');
+            await sleep(400);
+            k--;
+            continue;
+          }
+          if (!res || !res.ok) throw new Error((res && res.error) || 'the connection for real keys was closed');
         } else if (j.kind === 'rich') {
           if (action.t === 'ins') richInsert(action.ch);
           else richDelete();
@@ -243,6 +255,7 @@
       kind,
       fragile,
       real: !!msg.real,
+      system: !!msg.system,
       wpm: settings.wpm,
       chars: Array.from(text),
       actions: plan.actions,

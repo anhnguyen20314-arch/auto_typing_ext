@@ -3,7 +3,16 @@
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3, realKeys: false };
+const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3, keyMode: 'script' };
+
+const KEY_MODE_HINTS = {
+  script: 'Inserts the text by script. No setup; works in ordinary text boxes and most rich editors.',
+  debugger:
+    'Presses real keys through Chrome\'s debugger. Works in more editors (such as Google Docs). Chrome shows a "debugging this browser" banner while it runs.',
+  system:
+    'Presses real keys through Windows, with no banner. The page must keep keyboard focus: typing pauses when you click elsewhere. Needs a one-time install. In a terminal in the extension folder, run:  python native\\install.py ' +
+    chrome.runtime.id
+};
 
 // Default model names change over time; the Model field is editable.
 const PROVIDERS = {
@@ -63,7 +72,8 @@ function renderSettings() {
   $('typoRate').value = settings.typoRate;
   $('pauseScale').value = settings.pauseScale;
   $('countdown').value = settings.countdown;
-  $('realKeys').checked = !!settings.realKeys;
+  $('keyMode').value = settings.keyMode;
+  $('keyModeHint').textContent = KEY_MODE_HINTS[settings.keyMode] || '';
   $('wpmOut').textContent = settings.wpm + ' wpm';
   $('typoOut').textContent = Number(settings.typoRate) === 0 ? 'off' : settings.typoRate + '% of letters';
   $('pauseOut').textContent = Number(settings.pauseScale) === 0 ? 'off' : '×' + Number(settings.pauseScale).toFixed(1);
@@ -488,8 +498,9 @@ for (const id of ['wpm', 'typoRate', 'pauseScale', 'countdown']) {
 }
 
 // Takes effect on the next run, not one already in progress.
-$('realKeys').addEventListener('change', () => {
-  settings.realKeys = $('realKeys').checked;
+$('keyMode').addEventListener('change', () => {
+  settings.keyMode = $('keyMode').value;
+  $('keyModeHint').textContent = KEY_MODE_HINTS[settings.keyMode] || '';
   saveSoon();
 });
 
@@ -532,6 +543,10 @@ $('pause').addEventListener('click', togglePause);
   const stored = await chrome.storage.local.get(['text', 'settings', 'ai']);
   $('text').value = stored.text || '';
   Object.assign(settings, stored.settings);
+  // Older versions stored a "Real key events" checkbox instead of a mode.
+  if (settings.realKeys && !(stored.settings && stored.settings.keyMode)) settings.keyMode = 'debugger';
+  delete settings.realKeys;
+  if (!KEY_MODE_HINTS[settings.keyMode]) settings.keyMode = 'script';
   if (stored.ai) ai = Object.assign(ai, stored.ai);
   if (!PROVIDERS[ai.provider]) ai.provider = 'gemini';
   if (!TONES[ai.tone]) ai.tone = 'natural';

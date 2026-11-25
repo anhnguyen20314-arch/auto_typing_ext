@@ -36,17 +36,37 @@ Change them at `chrome://extensions/shortcuts`.
 | Typos | Share of letters that get a typo. Each one is noticed, backspaced and retyped, so the final text is exact. |
 | Pauses | Scales the pauses after punctuation and line breaks, and the occasional longer ones. |
 | Start delay | Countdown after **Start typing**, so you can click into the page. |
-| Real key events | Sends genuine key presses through Chrome's debugger. See below. |
+| Key events | How the text is delivered: by script, or as real key presses. See below. |
 
 Speed, Typos and Pauses can be changed while a run is in progress.
 
-### Real key events
+### Key events
 
-Off by default. Normally the extension inserts text by script, which works in ordinary inputs, textareas and most rich editors. With this on, keys are pressed through Chrome's debugger, which also works in editors that ignore script-inserted text, such as Google Docs.
+How the text reaches the page. Pick one under **Key events**; it applies from the next run.
 
-- Chrome shows a "debugging this browser" banner during a run.
-- New lines are sent as Shift+Enter, so forms are not submitted and chat messages are not sent.
-- It cannot start while DevTools is open on the tab.
+| Mode | How it works | When to use |
+|---|---|---|
+| Insert by script (default) | The extension inserts the text itself. | Ordinary inputs, textareas and most rich editors. No setup. |
+| Real keys: Chrome debugger | Keys are pressed through Chrome's debugger. | Editors that ignore script-inserted text, such as Google Docs. Chrome shows a "debugging this browser" banner during a run, and it cannot start while DevTools is open on the tab. |
+| Real keys: System (Windows helper) | A small helper program presses the keys through Windows. | The same editors, with no banner and with DevTools open. Windows only; needs the one-time install below. |
+
+In both real-key modes, new lines are sent as Shift+Enter, so forms are not submitted and chat messages are not sent.
+
+#### Installing the Windows helper
+
+Needs Python 3 on Windows. Copy the extension ID from the hint under **Key events** (or from `chrome://extensions`), then run this in the extension folder:
+
+```
+python native\install.py <extension-id>
+```
+
+It writes two small files in the `native` folder and one registry value under `HKEY_CURRENT_USER` for Chrome and for Edge. Run it again if the extension ID changes or the folder moves. To uninstall, run `python native\install.py --remove`.
+
+System keys go to whatever has keyboard focus, so:
+
+- Keep the page focused. Typing pauses when you click the side panel or another window, and continues when you click back into the field.
+- Keys are only pressed while a browser window is in front, and not while you hold Ctrl, Alt, Win or Shift.
+- Characters your keyboard layout has no key for (accents on a US layout, emoji) are inserted as Unicode input instead of key presses.
 
 ## AI rewrite
 
@@ -75,4 +95,5 @@ Default model names can go out of date. If the provider returns an error about t
 | `engine.js` | Builds the timed keystroke plan, including typos |
 | `content.js` | Types the plan into the focused field |
 | `background.js` | Hotkeys, messaging, real key events |
+| `native/autotyper_keys.py`, `native/install.py` | Optional Windows helper for System keys, and its installer |
 | `sidepanel.html`, `sidepanel.css`, `sidepanel.js` | The side panel UI and the AI rewrite |

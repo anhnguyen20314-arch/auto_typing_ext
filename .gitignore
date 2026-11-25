@@ -1,2 +1,7 @@
 .env
 .env.*
+
+# Written by native/install.py (contain local paths)
+native/com.autotyper.keys.json
+native/autotyper_keys.bat
+__pycache__/

@@ -1,12 +1,18 @@
 // Service worker: opens the side panel and relays commands to the active tab.
 'use strict';
 
-const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3, realKeys: false };
+const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3 };
 
 // ---- real key events (optional) ----------------------------------------------
-// With "Real key events" on, keystrokes are sent through Chrome's debugger
-// protocol, so the page receives genuine keyboard events instead of text
-// inserted by script. Chrome shows its "is debugging this browser" banner.
+// Two ways to press real keys instead of inserting text by script:
+//  - 'debugger': Chrome's debugger protocol. Chrome shows its "is debugging
+//    this browser" banner while it runs.
+//  - 'system': a small Windows helper program presses the keys through the
+//    operating system (see native/). Needs a one-time install.
+
+// Older saved settings only have the realKeys checkbox.
+const keyModeOf = (settings) => settings.keyMode || (settings.realKeys ? 'debugger' : 'script');
+const runMode = new Map(); // tabId -> 'debugger' | 'system'
 
 const SHIFT = 8;
 const KEY_MAP = (() => {
@@ -49,7 +55,72 @@ const PINKY = new Set([
 ]);
 
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-const keyCmd = (tabId, params) => chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', params);
+
+// Sends one key event (debugger-protocol shape, plus the hardware scan code).
+function keyCmd(tabId, params) {
+  const { scan, ...cdp } = params;
+  if (runMode.get(tabId) === 'system') return sysSend({ op: 'key', scan, down: params.type !== 'keyUp' });
+  return chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', cdp);
+}
+
+// ---- system keys: the Windows helper -------------------------------------------
+
+const SYS_HOST = 'com.autotyper.keys';
+const SCAN = { ShiftLeft: 0x2a, ShiftRight: 0x36, Backspace: 0x0e, Enter: 0x1c };
+let sysPort = null;
+let sysSeq = 0;
+let sysMap = {}; // character -> [scan code, needs Shift] for the active keyboard layout
+const sysWaiting = new Map();
+
+function sysSend(msg) {
+  return new Promise((resolve, reject) => {
+    if (!sysPort) return reject(new Error('the key helper is not connected'));
+    const id = ++sysSeq;
+    sysWaiting.set(id, { resolve, reject });
+    sysPort.postMessage(Object.assign({ id }, msg));
+  });
+}
+
+async function sysConnect() {
+  sysClose();
+  const port = chrome.runtime.connectNative(SYS_HOST);
+  sysPort = port;
+  port.onMessage.addListener((msg) => {
+    const w = sysWaiting.get(msg && msg.id);
+    if (!w) return;
+    sysWaiting.delete(msg.id);
+    if (msg.ok) return w.resolve(msg);
+    const err = new Error(msg.error || 'key helper error');
+    err.retry = !!msg.retry;
+    w.reject(err);
+  });
+  port.onDisconnect.addListener(() => {
+    const text = (chrome.runtime.lastError && chrome.runtime.lastError.message) || 'the key helper closed';
+    if (sysPort === port) sysPort = null;
+    for (const w of sysWaiting.values()) w.reject(new Error(text));
+    sysWaiting.clear();
+  });
+  const hello = await Promise.race([
+    sysSend({ op: 'hello' }),
+    pause(5000).then(() => {
+      throw new Error('the key helper did not answer');
+    })
+  ]);
+  sysMap = hello.map || {};
+}
+
+function sysClose() {
+  const port = sysPort;
+  if (!port) return;
+  sysPort = null;
+  try {
+    // The helper also releases held keys by itself when the connection closes.
+    port.postMessage({ id: 0, op: 'reset' });
+    port.disconnect();
+  } catch (_) {
+    /* already closed */
+  }
+}
 
 function gauss() {
   let u = 0;
@@ -85,6 +156,7 @@ function shiftEvent(type, side) {
     type,
     key: 'Shift',
     code: left ? 'ShiftLeft' : 'ShiftRight',
+    scan: left ? SCAN.ShiftLeft : SCAN.ShiftRight,
     windowsVirtualKeyCode: 16,
     nativeVirtualKeyCode: 16,
     location: left ? 1 : 2,
@@ -120,28 +192,36 @@ async function setShift(tabId, want, code) {
 }
 
 async function realKey(tabId, msg) {
+  const system = runMode.get(tabId) === 'system';
   if (msg.op === 'del') {
     await setShift(tabId, false);
-    const k = { key: 'Backspace', code: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 };
+    const k = { key: 'Backspace', code: 'Backspace', scan: SCAN.Backspace, windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 };
     return pressKey(tabId, Object.assign({ type: 'rawKeyDown' }, k), Object.assign({ type: 'keyUp' }, k), msg.wpm);
   }
   const ch = msg.ch;
   if (ch === '\n') {
     // Shift+Enter: a new line that does not submit a form or send a chat message.
     await setShift(tabId, true, 'Enter');
-    const k = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: SHIFT };
+    const k = { key: 'Enter', code: 'Enter', scan: SCAN.Enter, windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: SHIFT };
     return pressKey(tabId, Object.assign({ type: 'keyDown', text: '\r' }, k), Object.assign({ type: 'keyUp' }, k), msg.wpm);
   }
-  const info = KEY_MAP[ch];
+  let info = KEY_MAP[ch];
+  if (system) {
+    // Use the key the active keyboard layout really has for this character.
+    const sys = sysMap[ch];
+    info = sys ? { code: info ? info.code : '', vk: 0, scan: sys[0], shift: !!sys[1] } : null;
+  }
   if (!info) {
     // No single key for this character (accents, emoji, tabs): insert it as text.
     await setShift(tabId, false);
+    if (system) return sysSend({ op: 'text', text: ch });
     return chrome.debugger.sendCommand({ tabId }, 'Input.insertText', { text: ch });
   }
   await setShift(tabId, info.shift, info.code);
   const k = {
     key: ch,
     code: info.code,
+    scan: info.scan,
     windowsVirtualKeyCode: info.vk,
     nativeVirtualKeyCode: info.vk,
     modifiers: info.shift ? SHIFT : 0
@@ -165,11 +245,15 @@ async function attachDebugger(tabId) {
   await chrome.debugger.sendCommand({ tabId }, 'Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
 }
 
-function detachDebugger(tabId) {
+// A run in a tab ended: let go of whatever was pressing its keys.
+function endRun(tabId) {
+  const mode = runMode.get(tabId);
+  runMode.delete(tabId);
   const st = shiftState.get(tabId);
   if (st) clearTimeout(st.timer);
   shiftState.delete(tabId);
-  chrome.debugger.detach({ tabId }).catch(() => {});
+  if (mode === 'system') sysClose();
+  else chrome.debugger.detach({ tabId }).catch(() => {});
 }
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -196,20 +280,35 @@ async function startTyping() {
   const text = stored.text || '';
   if (!text.trim()) return { ok: false, error: 'There is no text to type. Enter some in the Auto Typer panel.' };
   const settings = Object.assign({}, DEFAULT_SETTINGS, stored.settings);
-  const msg = { type: 'AT_START', text, settings, real: !!settings.realKeys };
+  const mode = keyModeOf(settings);
+  const msg = { type: 'AT_START', text, settings, real: mode !== 'script', system: mode === 'system' };
 
-  if (msg.real) {
+  if (mode === 'debugger') {
     try {
       await attachDebugger(tab.id);
     } catch (err) {
       return {
         ok: false,
-        error: 'Real key events could not be turned on for this tab (' + err.message + '). Close DevTools on the tab, or untick "Real key events".'
+        error: 'The Chrome debugger could not be attached to this tab (' + err.message + '). Close DevTools on the tab, or choose another key mode.'
       };
     }
+    runMode.set(tab.id, 'debugger');
+  } else if (mode === 'system') {
+    try {
+      await sysConnect();
+    } catch (err) {
+      sysClose();
+      return {
+        ok: false,
+        error:
+          'The Windows key helper is not available (' + err.message + '). Install it once: open a terminal in the extension folder and run  python native\\install.py ' +
+          chrome.runtime.id + '  then try again.'
+      };
+    }
+    runMode.set(tab.id, 'system');
   }
   const res = await sendStart(tab.id, msg);
-  if (msg.real && !res.ok) detachDebugger(tab.id);
+  if (msg.real && !res.ok) endRun(tab.id);
   return res;
 }
 
@@ -243,13 +342,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'BG_KEY' && fromTab !== undefined) {
     realKey(fromTab, msg).then(
       () => sendResponse({ ok: true }),
-      (err) => sendResponse({ ok: false, error: String((err && err.message) || err) })
+      (err) => sendResponse({ ok: false, retry: !!(err && err.retry), error: String((err && err.message) || err) })
     );
     return true;
   }
   if (msg.type === 'AT_PROGRESS' && fromTab !== undefined) {
-    // A run in that tab ended: release the debugger if we were using it.
-    if (msg.real && (msg.state === 'done' || msg.state === 'stopped' || msg.state === 'error')) detachDebugger(fromTab);
+    if (msg.real && (msg.state === 'done' || msg.state === 'stopped' || msg.state === 'error')) endRun(fromTab);
     return;
   }
   if (msg.type === 'BG_START') {

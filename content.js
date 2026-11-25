@@ -139,7 +139,7 @@
           // Focus-loss pauses resume by themselves when focus comes back.
           if (j.autoPaused && hasFocus(j)) {
             // A person needs a moment to get back to the keyboard after clicking into the field.
-            await sleep(settleDelay());
+            await sleep(settleDelay(j));
             if (!hasFocus(j)) continue;
             j.paused = false;
             j.autoPaused = false;
@@ -156,12 +156,17 @@
     }
   }
 
-  // Reaction time between focusing a field and the first key: roughly 0.6 to 1.8 seconds.
-  const settleDelay = () => 600 + Math.random() * 1200;
+  // Reaction time between focusing a field and the first key: half to one and a
+  // half times the "Delay after focus" setting (0.6 to 1.8 seconds by default).
+  const focusDelayOf = (settings) => {
+    const v = settings ? Number(settings.focusDelay) : NaN;
+    return Number.isFinite(v) && settings.focusDelay !== '' ? Math.min(10, Math.max(0, v)) : 1.2;
+  };
+  const settleDelay = (j) => j.focusDelay * 1000 * (0.5 + Math.random());
 
   async function run(j) {
     report('typing');
-    await wait(j, settleDelay());
+    await wait(j, settleDelay(j));
     for (let k = 0; k < j.actions.length; k++) {
       const action = j.actions[k];
       await wait(j, action.d);
@@ -270,6 +275,7 @@
       kind,
       fragile,
       who,
+      focusDelay: focusDelayOf(settings),
       shift: plan.shift,
       real: !!msg.real,
       system: !!msg.system,
@@ -312,6 +318,7 @@
       case 'AT_SETTINGS':
         if (job && msg.settings) {
           job.pending = msg.settings;
+          job.focusDelay = focusDelayOf(msg.settings);
           res = { ok: true };
         }
         break;

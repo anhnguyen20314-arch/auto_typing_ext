@@ -1,7 +1,7 @@
 // Service worker: opens the side panel and relays commands to the active tab.
 'use strict';
 
-const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3 };
+const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3, focusDelay: 1.2 };
 
 // ---- real key events (optional) ----------------------------------------------
 // Two ways to press real keys instead of inserting text by script:

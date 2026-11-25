@@ -74,6 +74,11 @@
       <label for="countdown" class="inline">Start delay (seconds)</label>
       <input id="countdown" type="number" min="0" max="30" step="1">
     </div>
+    <div class="row">
+      <label for="focusDelay" class="inline">Delay after focus (seconds)</label>
+      <input id="focusDelay" type="number" min="0" max="10" step="0.1">
+    </div>
+    <p class="hint">How long it waits before the first key, and after you click back into the field. The real wait varies around this value. 0 types at once.</p>
     <label for="keyMode">Key events</label>
     <select id="keyMode">
       <option value="script">Insert by script (default)</option>

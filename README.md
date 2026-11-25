@@ -16,6 +16,8 @@ After changing any file, click the reload icon on the extension card and refresh
 2. Optional: pick a tone and strength and click **Humanize with AI**. Review the result; **Undo** restores your original.
 3. Click **Start typing**, then click into the field you want during the countdown.
 
+**Delay after focus** sets how long it waits before the first key, and again after you click back into the field when focus was lost. The real wait varies from half to one and a half times the value; 0 types at once.
+
 While it types, the panel shows the text with typed letters in green and the current letter marked (red while a typo is being corrected).
 
 ### Hotkeys

@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3, keyMode: 'script' };
+const DEFAULT_SETTINGS = { wpm: 65, typoRate: 3, pauseScale: 1, countdown: 3, focusDelay: 1.2, keyMode: 'script' };
 
 const KEY_MODE_HINTS = {
   script: 'Inserts the text by script. No setup; works in ordinary text boxes and most rich editors.',
@@ -72,6 +72,8 @@ function renderSettings() {
   $('typoRate').value = settings.typoRate;
   $('pauseScale').value = settings.pauseScale;
   $('countdown').value = settings.countdown;
+  // Not while it is being edited: rewriting the box would fight the typing.
+  if (document.activeElement !== $('focusDelay')) $('focusDelay').value = settings.focusDelay;
   $('keyMode').value = settings.keyMode;
   $('keyModeHint').textContent = KEY_MODE_HINTS[settings.keyMode] || '';
   $('wpmOut').textContent = settings.wpm + ' wpm';
@@ -485,11 +487,13 @@ $('text').addEventListener('input', () => {
   saveSoon();
 });
 
-for (const id of ['wpm', 'typoRate', 'pauseScale', 'countdown']) {
+for (const id of ['wpm', 'typoRate', 'pauseScale', 'countdown', 'focusDelay']) {
   $(id).addEventListener('input', () => {
     const v = Number($(id).value);
-    settings[id] = Number.isFinite(v) ? v : DEFAULT_SETTINGS[id];
+    // An emptied box means "not set", not zero.
+    settings[id] = Number.isFinite(v) && $(id).value !== '' ? v : DEFAULT_SETTINGS[id];
     if (id === 'countdown') settings.countdown = Math.min(30, Math.max(0, Math.round(settings.countdown)));
+    else if (id === 'focusDelay') settings.focusDelay = Math.min(10, Math.max(0, settings.focusDelay));
     else renderSettings();
     renderEstimate();
     saveSoon();

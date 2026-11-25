@@ -28,6 +28,33 @@
 
   const SHIFTED = new Set('~!@#$%^&*()_+{}|:"<>?'.split(''));
 
+  // Which finger presses each key (0 = left little finger ... 7 = right little finger).
+  const FINGER = {};
+  [['qaz1`', 0], ['wsx2', 1], ['edc3', 2], ['rfvtgb45', 3], ['yhnujm67', 4], ['ik,8', 5], ['ol.9', 6], ["p;/0-=[]'\\", 7]]
+    .forEach(([keys, f]) => keys.split('').forEach((k) => (FINGER[k] = f)));
+  FINGER.bs = 7; // Backspace
+  FINGER['\n'] = 7; // Enter
+  // Shifted symbol -> the key it sits on.
+  const BASE_KEY = {};
+  '1!2@3#4$5%6^7&8*9(0)-_=+[{]}\\|;:\'",<.>/?`~'.match(/../g).forEach((p) => (BASE_KEY[p[1]] = p[0]));
+
+  const HOLD_BASE = 132; // ms a key stays down for a slow typist; shorter as speed goes up
+
+  const keyOf = (ch) => {
+    const lc = ch.toLowerCase();
+    return BASE_KEY[lc] || lc;
+  };
+  // How two keys pressed one after the other relate:
+  // 'same' key, same 'finger', same 'hand', 'alt' (other hand), or 'free' (thumb / unknown).
+  function relation(a, b) {
+    const fa = FINGER[a];
+    const fb = FINGER[b];
+    if (fa === undefined || fb === undefined) return 'free';
+    if (a === b) return 'same';
+    if (fa === fb) return 'finger';
+    return fa < 4 === fb < 4 ? 'hand' : 'alt';
+  }
+
   const isLetter = (ch) => /^[a-zA-Z]$/.test(ch);
   const isUpper = (ch) => /^[A-Z]$/.test(ch);
   // Characters that are safe to type and then backspace again (one key, one code unit).
@@ -49,8 +76,9 @@
    * @param {string} text
    * @param {{wpm?:number, typoRate?:number, pauseScale?:number, allowTypos?:boolean, rng?:()=>number}} opts
    *   typoRate is a probability per letter (0..1).
-   * @returns {{actions:Array<{t:'ins'|'del', ch?:string, d:number, p:number}>, total:number, durationMs:number}}
-   *   d = delay in ms before the action, p = number of source characters completed after it.
+   * @returns {{actions:Array<{t:'ins'|'del', ch?:string, d:number, h:number, p:number}>, total:number, durationMs:number}}
+   *   d = delay in ms before the action, h = how long the key stays down,
+   *   p = number of source characters completed after it.
    */
   function buildPlan(text, opts) {
     opts = opts || {};
@@ -65,6 +93,7 @@
     const actions = [];
     let drift = 1; // slow wander of overall speed
     let wordMult = 1; // speed of the word being typed
+    let typoCtx = 1; // slips are likelier in long, unfamiliar words
     let typos = 0;
 
     const rand = (lo, hi) => lo + rng() * (hi - lo);
@@ -75,17 +104,25 @@
     };
     const lognormal = (sigma) => Math.exp(sigma * gauss() - (sigma * sigma) / 2);
 
-    function keyDelay(ch, prev) {
+    // A time with a long right tail (most values near the median, a few much longer).
+    const skewed = (median, sigma, lo, hi) => clamp(median * Math.exp(sigma * gauss()), lo, hi);
+
+    function keyDelay(ch, prev, scale) {
       drift = clamp(drift + (1 - drift) * 0.05 + gauss() * 0.03, 0.75, 1.3);
       let m = lognormal(0.32);
       const lc = ch.toLowerCase();
       const lp = prev === undefined ? '' : prev.toLowerCase();
-      if (FAST_BIGRAMS.has(lp + lc)) m *= 0.78;
-      else if (lp === lc) m *= 0.85;
+      // The other hand can already be on its way; the same finger has to travel.
+      const rel = prev === undefined ? 'free' : relation(keyOf(prev), keyOf(ch));
+      if (rel === 'same') m *= 0.85;
+      else if (rel === 'finger') m *= 1.22;
+      else if (rel === 'alt') m *= 0.93;
+      if (FAST_BIGRAMS.has(lp + lc)) m *= 0.82;
       if (isUpper(ch) || SHIFTED.has(ch)) m *= 1.35;
       else if (/^[0-9]$/.test(ch)) m *= 1.2;
       if (prev === undefined || prev === ' ') m *= 1.15;
-      return Math.max(25, base * m * drift * wordMult);
+      else if (ch === ' ' && isLetter(prev)) m *= 0.85; // the thumb is quick
+      return Math.max(25, base * m * drift * wordMult * (scale || 1));
     }
 
     // The run of letters starting at index i.
@@ -108,16 +145,26 @@
     // A short hesitation before a long or unusual word.
     function hesitation(word, mult) {
       if (pauseScale === 0 || mult <= 1.05) return 0;
-      return rng() < 0.3 ? rand(120, 420) * pauseScale * Math.min(1.5, mult) : 0;
+      return rng() < 0.3 ? skewed(240, 0.45, 90, 1500) * pauseScale * Math.min(1.5, mult) : 0;
     }
 
-    function pauseAfter(prev) {
+    const isPunct = (c) => c !== undefined && ',;:.!?'.includes(c);
+
+    // The pause before typing chars[i].
+    function pauseAfter(i) {
+      const ch = chars[i];
+      let prev = chars[i - 1];
       if (prev === undefined || pauseScale === 0) return 0;
+      // The space after punctuation follows at once; the pause comes before the next word.
+      if (ch === ' ' && isPunct(prev)) return 0;
+      let afterSpace = false;
+      if (prev === ' ' && isPunct(chars[i - 2])) prev = chars[i - 2];
+      else afterSpace = prev === ' ';
       let p = 0;
-      if (prev === ',' || prev === ';' || prev === ':') p = rand(120, 350);
-      else if (prev === '.' || prev === '!' || prev === '?') p = rand(350, 1000);
-      else if (prev === '\n') p = rand(500, 1500);
-      else if (prev === ' ' && rng() < 0.03) p = rand(600, 2200); // thinking
+      if (prev === ',' || prev === ';' || prev === ':') p = skewed(210, 0.45, 80, 1500);
+      else if (prev === '.' || prev === '!' || prev === '?') p = skewed(600, 0.6, 180, 6000);
+      else if (prev === '\n') p = skewed(1300, 0.7, 350, 12000);
+      else if (afterSpace && rng() < 0.03) p = skewed(1300, 0.75, 500, 10000); // thinking
       return p * pauseScale;
     }
 
@@ -143,7 +190,7 @@
 
       let prev = chars[i - 1];
       typed.forEach((ch, j) => {
-        const d = j === 0 ? firstDelay : keyDelay(ch, prev) * (j < wrong.length ? 0.8 : 1);
+        const d = j === 0 ? firstDelay : keyDelay(ch, prev, j < wrong.length ? 0.8 : 1);
         actions.push({ t: 'ins', ch, d, p: i + Math.min(j + 1, cp) });
         prev = ch;
       });
@@ -151,12 +198,13 @@
       const dels = typed.length - cp;
       if (dels > 0) typos++;
       for (let j = 0; j < dels; j++) {
-        const d = j === 0 ? rand(400, 950) : wholeWord ? rand(55, 110) : rand(90, 170);
+        // Noticing takes a moment; after that Backspace is tapped in a quick, even run.
+        const d = j === 0 ? skewed(600, 0.38, 280, 2500) : wholeWord ? skewed(80, 0.2, 45, 160) : skewed(125, 0.22, 70, 260);
         actions.push({ t: 'del', d, p: i + cp });
       }
       prev = cp > 0 ? correct[cp - 1] : chars[i - 1];
       for (let j = cp; j < correct.length; j++) {
-        const d = (j === cp ? rand(120, 300) : 0) + keyDelay(correct[j], prev) * 0.9;
+        const d = (j === cp ? skewed(190, 0.35, 90, 700) : 0) + keyDelay(correct[j], prev, 0.9);
         actions.push({ t: 'ins', ch: correct[j], d, p: i + j + 1 });
         prev = correct[j];
       }
@@ -172,16 +220,17 @@
       const ch = chars[i];
       const prev = chars[i - 1];
       let word = null;
-      if (!isLetter(ch)) wordMult = 1;
+      if (!isLetter(ch)) wordMult = typoCtx = 1;
       else if (!isLetter(prev)) {
         word = wordAt(i);
         wordMult = wordSpeed(word);
+        typoCtx = clamp(1 + (wordMult - 1) * 2.5, 0.6, 1.6);
       }
-      let d = keyDelay(ch, prev) + pauseAfter(prev);
+      let d = keyDelay(ch, prev) + pauseAfter(i);
       if (word) d += hesitation(word, wordMult);
 
       // Now and then a word goes wrong early, is finished anyway, then wiped and typed again.
-      if (word && typoRate > 0 && word.length >= 3 && word.length <= 9 && rng() < Math.min(0.05, typoRate * 0.6)) {
+      if (word && typoRate > 0 && word.length >= 3 && word.length <= 9 && rng() < Math.min(0.02, typoRate * 0.25)) {
         const at = rng() < 0.5 ? 0 : 1;
         const opts2 = NEIGHBORS[word[at].toLowerCase()];
         let slip = opts2[Math.floor(rng() * opts2.length)];
@@ -194,7 +243,7 @@
         continue;
       }
 
-      if (typoRate > 0 && isLetter(ch) && rng() < typoRate) {
+      if (typoRate > 0 && isLetter(ch) && rng() < typoRate * typoCtx) {
         const next = chars[i + 1];
         const r = rng();
         if (r < 0.6) {
@@ -234,6 +283,26 @@
       typos = 0;
       chars.forEach((ch, j) => actions.push({ t: 'ins', ch, d: keyDelay(ch, chars[j - 1]), p: j + 1, c: true }));
     }
+
+    // How long each key stays down. Fingers do not wait for the previous key to
+    // come up: with the other hand the next key often lands first (rollover),
+    // while the same finger has to leave its key before it can press another.
+    const holdMean = clamp(HOLD_BASE - wpm * 0.25, 80, 125);
+    const actionKey = (a) => (a.t === 'del' ? 'bs' : keyOf(a.ch));
+    actions.forEach((a, k) => {
+      const key = actionKey(a);
+      let h = holdMean * lognormal(0.22);
+      if (FINGER[key] === 0 || FINGER[key] === 7) h *= 1.1;
+      else if (key === ' ') h *= 1.05;
+      const next = actions[k + 1];
+      if (next) {
+        const rel = relation(key, actionKey(next));
+        if (rel === 'same') h = Math.min(h, next.d * rand(0.45, 0.7));
+        else if (rel === 'finger') h = Math.min(h, next.d - rand(20, 50));
+        else if (rel === 'hand' && h > next.d && rng() < 0.5) h = next.d * rand(0.7, 0.95);
+      }
+      a.h = Math.round(clamp(h, 30, 260));
+    });
 
     let durationMs = 0;
     for (const a of actions) durationMs += a.d;

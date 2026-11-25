@@ -137,11 +137,30 @@ function holdTime(code, wpm) {
   return Math.min(220, Math.max(30, h));
 }
 
-function pressKey(tabId, down, up, wpm) {
-  return keyCmd(tabId, down).then(() => {
-    // Release a moment later, like a finger leaving the key.
-    setTimeout(() => keyCmd(tabId, up).catch(() => {}), holdTime(down.code, wpm));
-  });
+// Keys still waiting for their release: "tabId:code" -> function that releases it now.
+const pendingUp = new Map();
+
+function releaseAll(tabId) {
+  for (const [id, fire] of [...pendingUp]) if (id.startsWith(tabId + ':')) fire();
+}
+
+async function pressKey(tabId, down, up, msg) {
+  // The typing plan says how long each key is held; older plans leave it to holdTime.
+  const planned = Number(msg.h);
+  const hold = planned > 0 ? Math.min(300, Math.max(20, planned)) : holdTime(down.code, msg.wpm);
+  const id = tabId + ':' + down.code;
+  // One finger, one key: the same key is released before it is pressed again.
+  const prior = pendingUp.get(id);
+  if (prior) await prior();
+  await keyCmd(tabId, down);
+  // Release a moment later, like a finger leaving the key.
+  const fire = () => {
+    clearTimeout(timer);
+    pendingUp.delete(id);
+    return keyCmd(tabId, up).catch(() => {});
+  };
+  const timer = setTimeout(fire, hold);
+  pendingUp.set(id, fire);
 }
 
 // ---- Shift key ---------------------------------------------------------------
@@ -196,14 +215,14 @@ async function realKey(tabId, msg) {
   if (msg.op === 'del') {
     await setShift(tabId, false);
     const k = { key: 'Backspace', code: 'Backspace', scan: SCAN.Backspace, windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 };
-    return pressKey(tabId, Object.assign({ type: 'rawKeyDown' }, k), Object.assign({ type: 'keyUp' }, k), msg.wpm);
+    return pressKey(tabId, Object.assign({ type: 'rawKeyDown' }, k), Object.assign({ type: 'keyUp' }, k), msg);
   }
   const ch = msg.ch;
   if (ch === '\n') {
     // Shift+Enter: a new line that does not submit a form or send a chat message.
     await setShift(tabId, true, 'Enter');
     const k = { key: 'Enter', code: 'Enter', scan: SCAN.Enter, windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, modifiers: SHIFT };
-    return pressKey(tabId, Object.assign({ type: 'keyDown', text: '\r' }, k), Object.assign({ type: 'keyUp' }, k), msg.wpm);
+    return pressKey(tabId, Object.assign({ type: 'keyDown', text: '\r' }, k), Object.assign({ type: 'keyUp' }, k), msg);
   }
   let info = KEY_MAP[ch];
   if (system) {
@@ -230,7 +249,7 @@ async function realKey(tabId, msg) {
     tabId,
     Object.assign({ type: 'keyDown', text: ch, unmodifiedText: ch }, k),
     Object.assign({ type: 'keyUp' }, k),
-    msg.wpm
+    msg
   );
 }
 
@@ -248,6 +267,7 @@ async function attachDebugger(tabId) {
 // A run in a tab ended: let go of whatever was pressing its keys.
 function endRun(tabId) {
   const mode = runMode.get(tabId);
+  releaseAll(tabId); // let go of any key still held, before the run's mode is cleared
   runMode.delete(tabId);
   const st = shiftState.get(tabId);
   if (st) clearTimeout(st.timer);

@@ -138,6 +138,9 @@
           await sleep(120);
           // Focus-loss pauses resume by themselves when focus comes back.
           if (j.autoPaused && hasFocus(j)) {
+            // A person needs a moment to get back to the keyboard after clicking into the field.
+            await sleep(settleDelay());
+            if (!hasFocus(j)) continue;
             j.paused = false;
             j.autoPaused = false;
             report('typing');
@@ -153,8 +156,12 @@
     }
   }
 
+  // Reaction time between focusing a field and the first key: roughly 0.6 to 1.8 seconds.
+  const settleDelay = () => 600 + Math.random() * 1200;
+
   async function run(j) {
     report('typing');
+    await wait(j, settleDelay());
     for (let k = 0; k < j.actions.length; k++) {
       const action = j.actions[k];
       await wait(j, action.d);
@@ -176,8 +183,8 @@
           // Real key events: the background worker presses the key through Chrome's debugger.
           const res = await chrome.runtime.sendMessage(
             action.t === 'ins'
-              ? { type: 'BG_KEY', op: 'ins', ch: action.ch, wpm: j.wpm }
-              : { type: 'BG_KEY', op: 'del', wpm: j.wpm }
+              ? { type: 'BG_KEY', op: 'ins', ch: action.ch, wpm: j.wpm, h: action.h }
+              : { type: 'BG_KEY', op: 'del', wpm: j.wpm, h: action.h }
           );
           if (res && res.retry) {
             // The key helper refused: another program is in front. Wait, then press this key again.

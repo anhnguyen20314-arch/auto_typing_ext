@@ -32,8 +32,8 @@ Change them at `chrome://extensions/shortcuts`.
 
 | Setting | What it does |
 |---|---|
-| Speed | Target words per minute. Pauses and corrections make the real speed a little lower. |
-| Typos | Share of letters that get a typo. Each one is noticed, backspaced and retyped, so the final text is exact. |
+| Speed | Target words per minute. Pauses and corrections make the real speed a little lower. Common words are typed a little faster, long or unusual words slower. |
+| Typos | Share of letters that get a typo. Each one is noticed, backspaced and retyped, so the final text is exact. Now and then a whole word is wiped and typed again. |
 | Pauses | Scales the pauses after punctuation and line breaks, and the occasional longer ones. |
 | Start delay | Countdown after **Start typing**, so you can click into the page. |
 | Key events | How the text is delivered: by script, or as real key presses. See below. |

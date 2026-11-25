@@ -16,6 +16,16 @@
     'se ha as ou io le ve co me de hi ri ro ic ne ea ra ce'
   ).split(' '));
 
+  // Very common words are typed from habit, a little faster than the rest.
+  const COMMON_WORDS = new Set((
+    'the be to of and a in that have i it for not on with he as you do at this but his by from they we say her she ' +
+    'or an will my one all would there their what so up out if about who get which go me when make can like time no ' +
+    'just him know take people into year your good some could them see other than then now look only come its over ' +
+    'think also back after use two how our work first well way even new want because any these give day most us is ' +
+    'are was were has had been more very much many here where why did does am too'
+  ).split(' '));
+  const RARE_LETTERS = /[jqxzkv]/g;
+
   const SHIFTED = new Set('~!@#$%^&*()_+{}|:"<>?'.split(''));
 
   const isLetter = (ch) => /^[a-zA-Z]$/.test(ch);
@@ -54,6 +64,7 @@
     const base = 60000 / (wpm * 5);
     const actions = [];
     let drift = 1; // slow wander of overall speed
+    let wordMult = 1; // speed of the word being typed
     let typos = 0;
 
     const rand = (lo, hi) => lo + rng() * (hi - lo);
@@ -74,7 +85,30 @@
       if (isUpper(ch) || SHIFTED.has(ch)) m *= 1.35;
       else if (/^[0-9]$/.test(ch)) m *= 1.2;
       if (prev === undefined || prev === ' ') m *= 1.15;
-      return Math.max(25, base * m * drift);
+      return Math.max(25, base * m * drift * wordMult);
+    }
+
+    // The run of letters starting at index i.
+    function wordAt(i) {
+      let j = i;
+      while (j < n && isLetter(chars[j])) j++;
+      return chars.slice(i, j);
+    }
+
+    // Familiar short words go quicker; long words and awkward letters go slower.
+    function wordSpeed(word) {
+      const w = word.join('').toLowerCase();
+      if (COMMON_WORDS.has(w)) return 0.9;
+      let m = 1;
+      if (w.length >= 7) m += Math.min(0.24, (w.length - 6) * 0.04);
+      m += Math.min(0.1, (w.match(RARE_LETTERS) || []).length * 0.04);
+      return m;
+    }
+
+    // A short hesitation before a long or unusual word.
+    function hesitation(word, mult) {
+      if (pauseScale === 0 || mult <= 1.05) return 0;
+      return rng() < 0.3 ? rand(120, 420) * pauseScale * Math.min(1.5, mult) : 0;
     }
 
     function pauseAfter(prev) {
@@ -98,12 +132,14 @@
 
     // Type `wrong` instead of chars[i .. i+consumed), carry on for k more
     // characters, notice, backspace to the common prefix and retype correctly.
-    function mistake(i, wrong, consumed, k, firstDelay) {
+    // With wholeWord, everything typed is deleted and typed again, the way people
+    // wipe a word they got wrong instead of fixing one letter.
+    function mistake(i, wrong, consumed, k, firstDelay, wholeWord) {
       const look = chars.slice(i + consumed, i + consumed + k);
       const typed = wrong.concat(look);
       const correct = chars.slice(i, i + consumed + k);
       let cp = 0;
-      while (cp < typed.length && cp < correct.length && typed[cp] === correct[cp]) cp++;
+      while (!wholeWord && cp < typed.length && cp < correct.length && typed[cp] === correct[cp]) cp++;
 
       let prev = chars[i - 1];
       typed.forEach((ch, j) => {
@@ -115,7 +151,7 @@
       const dels = typed.length - cp;
       if (dels > 0) typos++;
       for (let j = 0; j < dels; j++) {
-        const d = j === 0 ? rand(400, 950) : rand(90, 170);
+        const d = j === 0 ? rand(400, 950) : wholeWord ? rand(55, 110) : rand(90, 170);
         actions.push({ t: 'del', d, p: i + cp });
       }
       prev = cp > 0 ? correct[cp - 1] : chars[i - 1];
@@ -135,7 +171,28 @@
     while (i < n) {
       const ch = chars[i];
       const prev = chars[i - 1];
-      const d = keyDelay(ch, prev) + pauseAfter(prev);
+      let word = null;
+      if (!isLetter(ch)) wordMult = 1;
+      else if (!isLetter(prev)) {
+        word = wordAt(i);
+        wordMult = wordSpeed(word);
+      }
+      let d = keyDelay(ch, prev) + pauseAfter(prev);
+      if (word) d += hesitation(word, wordMult);
+
+      // Now and then a word goes wrong early, is finished anyway, then wiped and typed again.
+      if (word && typoRate > 0 && word.length >= 3 && word.length <= 9 && rng() < Math.min(0.05, typoRate * 0.6)) {
+        const at = rng() < 0.5 ? 0 : 1;
+        const opts2 = NEIGHBORS[word[at].toLowerCase()];
+        let slip = opts2[Math.floor(rng() * opts2.length)];
+        if (isUpper(word[at])) slip = slip.toUpperCase();
+        const wrong = word.slice();
+        wrong[at] = slip;
+        // Sometimes the space after the word is typed too before the slip is noticed.
+        const k = chars[i + word.length] === ' ' && rng() < 0.5 ? 1 : 0;
+        i = mistake(i, wrong, word.length, k, d, true);
+        continue;
+      }
 
       if (typoRate > 0 && isLetter(ch) && rng() < typoRate) {
         const next = chars[i + 1];
